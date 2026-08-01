@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Cuentas / Wallets
+model Account {
+  id        String     @id @default(uuid())
+  name      String     // Ej: "Wallet Principal", "Bitget Futures"
+  address   String?    // Dirección EVM si aplica
+  positions Position[]
+  createdAt DateTime   @default(now())
+}
+
+// Posiciones (LPs, Préstamos DeFi o Futuros)
+model Position {
+  id               String   @id @default(uuid())
+  accountId        String
+  account          Account  @relation(fields: [accountId], references: [id])
+  type             String   // "LP", "FUTURE", "LENDING"
+  symbol           String   // Ej: "ETH/USDC", "BTCUSDT"
+  
+  // Métricas específicas para LPs y Préstamos
+  rangeLower       Float?   // Precio mínimo del rango LP
+  rangeUpper       Float?   // Precio máximo del rango LP
+  collateralUSD    Float?   // Colateral depositado (para Health Factor)
+  borrowedUSD      Float?   // Deuda (para Health Factor)
+  liquidationPrice Float?   // Precio crítico de liquidación
+  
+  // Métricas para Futuros
+  leverage         Int?     // Apalancamiento (ej: 10x)
+  entryPrice       Float?   // Precio de entrada
+  size             Float?   // Tamaño de la posición
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
