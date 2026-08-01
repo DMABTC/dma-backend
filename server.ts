@@ -15,43 +15,24 @@ let prices: Record<string, number> = {
   ETHUSDT: 3500.00,
 };
 
-// Función para consultar precios (CoinGecko -> Fallback MEXC)
+// Consultar API pública de Bitget V2 cada 3 segundos
 setInterval(async () => {
   try {
-    // 1. Intentar obtener precios desde CoinGecko
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd'
-    );
-    
-    if (response.data.bitcoin?.usd) {
-      prices['BTCUSDT'] = response.data.bitcoin.usd;
-    }
-    if (response.data.ethereum?.usd) {
-      prices['ETHUSDT'] = response.data.ethereum.usd;
-    }
-    console.log('✅ Precios actualizados desde CoinGecko:', prices);
-  } catch (error) {
-    // 2. Fallback: Consultar API pública de MEXC si CoinGecko no responde
-    try {
-      const responseMexc = await axios.get(
-        'https://api.mexc.com/api/v3/ticker/price?symbol=BTCUSDT'
-      );
-      const responseMexcEth = await axios.get(
-        'https://api.mexc.com/api/v3/ticker/price?symbol=ETHUSDT'
-      );
+    const btcRes = await axios.get('https://api.bitget.com/api/v2/spot/market/tickers?symbol=BTCUSDT');
+    const ethRes = await axios.get('https://api.bitget.com/api/v2/spot/market/tickers?symbol=ETHUSDT');
 
-      if (responseMexc.data?.price) {
-        prices['BTCUSDT'] = parseFloat(responseMexc.data.price);
-      }
-      if (responseMexcEth.data?.price) {
-        prices['ETHUSDT'] = parseFloat(responseMexcEth.data.price);
-      }
-      console.log('✅ Precios actualizados desde MEXC:', prices);
-    } catch (mexcError) {
-      console.log('⚠️ Error al consultar precios en CoinGecko y MEXC');
+    if (btcRes.data?.data?.[0]?.lastPr) {
+      prices['BTCUSDT'] = parseFloat(btcRes.data.data[0].lastPr);
     }
+    if (ethRes.data?.data?.[0]?.lastPr) {
+      prices['ETHUSDT'] = parseFloat(ethRes.data.data[0].lastPr);
+    }
+
+    console.log('✅ Precios en vivo de Bitget:', prices);
+  } catch (error) {
+    console.log('⚠️ Error al obtener precios desde Bitget');
   }
-}, 5000);
+}, 3000);
 
 // Conexión en vivo por WebSocket
 server.register(async (fastify) => {
@@ -91,7 +72,7 @@ server.register(async (fastify) => {
 const start = async () => {
   try {
     await server.listen({ port: 4000, host: '0.0.0.0' });
-    console.log('🚀 Servidor de DMA CAPITAL corriendo en http://localhost:4000');
+    console.log('🚀 Servidor de DMA CAPITAL corriendo en puerto 4000');
   } catch (err) {
     process.exit(1);
   }
