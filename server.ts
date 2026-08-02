@@ -2,20 +2,20 @@ import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
 import axios from 'axios';
+import { PrismaClient } from '@prisma/client';
 
 const server = Fastify({ logger: true });
+const prisma = new PrismaClient();
 
-// Registrar soporte de CORS y WebSockets
 server.register(fastifyCors, { origin: '*' });
 server.register(fastifyWebsocket);
 
-// Precios iniciales por defecto
 let prices: Record<string, number> = {
   BTCUSDT: 68500.00,
   ETHUSDT: 3500.00,
 };
 
-// Consultar API pública de Bitget V2 cada 3 segundos
+// Polling de precios desde Bitget
 setInterval(async () => {
   try {
     const btcRes = await axios.get('https://api.bitget.com/api/v2/spot/market/tickers?symbol=BTCUSDT');
@@ -27,52 +27,86 @@ setInterval(async () => {
     if (ethRes.data?.data?.[0]?.lastPr) {
       prices['ETHUSDT'] = parseFloat(ethRes.data.data[0].lastPr);
     }
-
-    console.log('✅ Precios en vivo de Bitget:', prices);
   } catch (error) {
-    console.log('⚠️ Error al obtener precios desde Bitget');
+    console.log('⚠️ Error al consultar Bitget API');
   }
 }, 3000);
 
-// Conexión en vivo por WebSocket
+// WebSocket Stream con Métricas DeFi y Futuros
 server.register(async (fastify) => {
   fastify.get('/ws/portfolio', { websocket: true }, (connection) => {
     const ws = (connection as any).socket || connection;
 
-    console.log('🟢 Cliente conectado a DMA CAPITAL Live Feed');
+    console.log('🟢 Cliente conectado');
 
-    const intervalId = setInterval(() => {
+    const intervalId = setInterval(async () => {
       if (ws.readyState === ws.OPEN) {
-        
-        const btcValue = 1.5 * (prices['BTCUSDT'] || 0);
-        const ethValue = 10.0 * (prices['ETHUSDT'] || 0);
-        const netWorth = btcValue + ethValue;
+        try {
+          // Consultar posiciones reales desde Supabase
+          const positions = await prisma.position.findMany();
+          
+          const currentBtc = prices['BTCUSDT'] || 68500;
+          const currentEth = prices['ETHUSDT'] || 3500;
 
-        const payload = {
-          event: 'PORTFOLIO_TICK',
-          data: {
-            netWorthUSD: netWorth.toFixed(2),
-            prices: prices,
-            timestamp: Date.now()
+          // 1. Procesar Posición LP
+          const lp = positions.find(p => p.type === 'LP');
+          const isLpInRange = lp && currentEth >= (lp.rangeLower || 0) && currentEth <= (lp.rangeUpper || 0);
+
+          // 2. Procesar Posición Futuros
+          const future = positions.find(p => p.type === 'FUTURE');
+          let uPnL = 0;
+          let healthFactor = 2.0;
+
+          if (future && future.entryPrice && future.size) {
+            // PnL No Realizado = (Precio Actual - Precio Entrada) * Tamaño
+            uPnL = (currentBtc - future.entryPrice) * future.size;
+
+            // Health Factor = Distancia relativa al Precio de Liquidación
+            if (future.liquidationPrice) {
+              const riskDistance = (currentBtc - future.liquidationPrice) / future.liquidationPrice;
+              healthFactor = Math.max(0.5, parseFloat((1 + riskDistance).toFixed(2)));
+            }
           }
-        };
 
-        ws.send(JSON.stringify(payload));
+          const payload = {
+            event: 'PORTFOLIO_TICK',
+            data: {
+              prices,
+              lpStatus: {
+                symbol: lp?.symbol || 'ETH/USDC',
+                inRange: isLpInRange,
+                lower: lp?.rangeLower,
+                upper: lp?.rangeUpper
+              },
+              futuresStatus: {
+                symbol: future?.symbol || 'BTCUSDT',
+                leverage: future?.leverage,
+                entryPrice: future?.entryPrice,
+                uPnL: uPnL.toFixed(2),
+                liquidationPrice: future?.liquidationPrice,
+                healthFactor: healthFactor
+              },
+              timestamp: Date.now()
+            }
+          };
+
+          ws.send(JSON.stringify(payload));
+        } catch (err) {
+          console.error('Error procesando tick:', err);
+        }
       }
     }, 1000);
 
     ws.on('close', () => {
-      console.log('🔴 Cliente desconectado');
       clearInterval(intervalId);
     });
   });
 });
 
-// Iniciar el servidor
 const start = async () => {
   try {
     await server.listen({ port: 4000, host: '0.0.0.0' });
-    console.log('🚀 Servidor de DMA CAPITAL corriendo en puerto 4000');
+    console.log('🚀 Servidor corriendo en puerto 4000');
   } catch (err) {
     process.exit(1);
   }
