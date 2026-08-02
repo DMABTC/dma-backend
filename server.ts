@@ -3,9 +3,17 @@ import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
 import axios from 'axios';
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
+import 'dotenv/config';
 
 const server = Fastify({ logger: true });
-const prisma = new PrismaClient();
+
+// Configuración del cliente Prisma con el adaptador Pg para Prisma 7
+const connectionString = process.env.DATABASE_URL;
+const pool = new Pool({ connectionString });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 server.register(fastifyCors, { origin: '*' });
 server.register(fastifyWebsocket);
@@ -58,10 +66,8 @@ server.register(async (fastify) => {
           let healthFactor = 2.0;
 
           if (future && future.entryPrice && future.size) {
-            // PnL No Realizado = (Precio Actual - Precio Entrada) * Tamaño
             uPnL = (currentBtc - future.entryPrice) * future.size;
 
-            // Health Factor = Distancia relativa al Precio de Liquidación
             if (future.liquidationPrice) {
               const riskDistance = (currentBtc - future.liquidationPrice) / future.liquidationPrice;
               healthFactor = Math.max(0.5, parseFloat((1 + riskDistance).toFixed(2)));
@@ -75,15 +81,15 @@ server.register(async (fastify) => {
               lpStatus: {
                 symbol: lp?.symbol || 'ETH/USDC',
                 inRange: isLpInRange,
-                lower: lp?.rangeLower,
-                upper: lp?.rangeUpper
+                lower: lp?.rangeLower || 0,
+                upper: lp?.rangeUpper || 0
               },
               futuresStatus: {
                 symbol: future?.symbol || 'BTCUSDT',
-                leverage: future?.leverage,
-                entryPrice: future?.entryPrice,
+                leverage: future?.leverage || 1,
+                entryPrice: future?.entryPrice || 0,
                 uPnL: uPnL.toFixed(2),
-                liquidationPrice: future?.liquidationPrice,
+                liquidationPrice: future?.liquidationPrice || 0,
                 healthFactor: healthFactor
               },
               timestamp: Date.now()
@@ -105,9 +111,11 @@ server.register(async (fastify) => {
 
 const start = async () => {
   try {
-    await server.listen({ port: 4000, host: '0.0.0.0' });
-    console.log('🚀 Servidor corriendo en puerto 4000');
+    const port = process.env.PORT ? parseInt(process.env.PORT) : 4000;
+    await server.listen({ port, host: '0.0.0.0' });
+    console.log(`🚀 Servidor corriendo en puerto ${port}`);
   } catch (err) {
+    console.error(err);
     process.exit(1);
   }
 };
